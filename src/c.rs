@@ -1,3 +1,5 @@
+use std::cmp::min;
+use std::slice::Iter;
 use crate::base::{ObjectTransmissionInformation};
 use crate::decoder::Decoder as DecoderNative;
 use crate::encoder::Encoder as EncoderNative;
@@ -8,106 +10,103 @@ pub struct Encoder {
     encoder: EncoderNative,
 }
 
-pub extern "C" fn raptorq_encoder_with_defaults(
-    data: *const u8,
-    data_len: usize,
-    maximum_transmission_unit: u16
-) -> *const Encoder {
-    let data = unsafe { std::slice::from_raw_parts(data, data_len) };
-    let encoder = EncoderNative::with_defaults(data, maximum_transmission_unit);
-    Box::into_raw(Box::new(Encoder { encoder }))
-}
-
-#[no_mangle]
-pub extern "C" fn raptorq_release_encoder(encoder: *mut Encoder) {
-    if !encoder.is_null() {
-        unsafe {
-            Box::from_raw(encoder)
-        };
-    }
-}
-
 #[repr(C)]
 pub struct Decoder {
     decoder: DecoderNative,
 }
 
+#[repr(C)]
+pub struct EncodingPacket {
+    data: *mut u8,
+    data_len: usize,
+    next: Option<Box<EncodingPacket>>,
+}
+
+#[no_mangle]
+pub extern "C" fn raptorq_encoder_with_defaults(
+    data: *const u8,
+    data_len: usize,
+    maximum_transmission_unit: u16
+) -> Box<Encoder> {
+    let data = unsafe { std::slice::from_raw_parts(data, data_len) };
+    let encoder = EncoderNative::with_defaults(data, maximum_transmission_unit);
+    Box::new(Encoder { encoder })
+}
+
+#[no_mangle]
+pub extern "C" fn raptorq_encoder_encode(
+    encoder: *const Encoder,
+    repair_packets_per_block: u32
+) -> Option<Box<EncodingPacket>> {
+    unsafe {
+        if encoder.is_null() {
+            return None;
+        }
+    }
+    let packets = unsafe  {
+        (*encoder).encoder.get_encoded_packets(repair_packets_per_block)
+    };
+    let mut next: Option<Box<EncodingPacket>> = None;
+    for packet in packets.iter().rev() {
+        let mut serialized_data = packet.serialize().into_boxed_slice();
+        let data = serialized_data.as_mut_ptr();
+        let data_len = serialized_data.len();
+        std::mem::forget(serialized_data);
+        let new_packet = EncodingPacket { data, data_len, next };
+        next = Some(Box::new(new_packet));
+    }
+    next
+}
+
+#[no_mangle]
+pub extern "C" fn raptorq_encoding_packet_free(packet: Option<Box<EncodingPacket>>) {
+    if packet.is_none() {
+        return;
+    }
+    let packet = packet.unwrap();
+    unsafe {
+        let s = std::slice::from_raw_parts_mut(packet.data, packet.data_len).as_mut_ptr();
+        Box::from_raw(s);
+    };
+}
+
+#[no_mangle]
+pub extern "C" fn raptorq_encoder_free(_: Option<Box<Encoder>>) {}
+
 #[no_mangle]
 pub extern "C" fn raptorq_decoder_with_defaults(
     transfer_length: u64,
     maximum_transmission_unit: u16
-) -> *const Decoder {
+) -> Box<Decoder> {
     let config = ObjectTransmissionInformation::with_defaults(
         transfer_length,
         maximum_transmission_unit,
     );
-    Box::into_raw(Box::new(Decoder { decoder: DecoderNative::new(config) }))
+    Box::new(Decoder { decoder: DecoderNative::new(config) })
 }
 
 #[no_mangle]
-pub extern "C" fn raptorq_decode(
+pub extern "C" fn raptorq_decoder_decode(
     decoder: *mut Decoder,
     packet: *const u8,
     packet_len: usize,
     output: *mut u8,
-) -> usize {
+) -> usize{
+    unsafe {
+        if decoder.is_null() {
+            return 0;
+        }
+    }
     let packet = unsafe { std::slice::from_raw_parts(packet, packet_len) };
-    decoder.decoder.decode(EncodingPacketNative::deserialize(packet))
-        .map(|data| {
-            unsafe {
-                std::ptr::copy_nonoverlapping(data.as_ptr(), output, data.len());
-            }
-            data.len()
-        })
-        .unwrap_or(0)
+    let encoding_packet = EncodingPacketNative::deserialize(packet);
+    unsafe {
+        (*decoder).decoder.decode(encoding_packet).map(|data| {
+            let data_len = data.len();
+            std::ptr::copy_nonoverlapping(data.as_ptr(), output, data_len);
+            data_len
+        }).unwrap_or(0)
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn raptorq_release_decoder(decoder: *mut Decoder) {
-    if !decoder.is_null() {
-        unsafe {
-            Box::from_raw(decoder)
-        };
-    }
-}
-
-#[repr(C)]
-pub struct EncodingPacket {
-    next: *const EncodingPacket,
-    len: usize,
-    data: *const u8,
-}
-
-#[no_mangle]
-pub extern "C" fn raptorq_encode(
-    encoder: *const Encoder,
-    repair_packets_per_block: u32
-) -> *const EncodingPacket {
-    if s.is_null() {
-        return std::ptr::null();
-    }
-
-    let packets = encoder.encoder.get_encoded_packets(repair_packets_per_block);
-
-    let mut next_packet: *EncodingPacket = std::ptr::null_mut();
-    for packet in packets.iter().rev() {
-        let serialized_packet = packet.serialize().as_slice();
-        let packet = EncodingPacket {
-            next: next_packet,
-            len: serialized_packet.len(),
-            data: serialized_packet.as_ptr(),
-        };
-        next_packet = Box::into_raw(Box::new(packet));
-    }
-
-    return next_packet;
-}
-
-#[no_mangle]
-pub extern "C" fn raptorq_release_encoding_packet(packet: *mut EncodingPacket) {
-    if !packet.is_null() {
-        unsafe {
-            Box::from_raw(packet)
-        };
-    }
-}
+pub extern "C" fn raptorq_decoder_free(_: Option<Box<Decoder>>) {}

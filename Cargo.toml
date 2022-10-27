@@ -11,7 +11,7 @@ rust-version = "1.60"
 authors = ["Christopher Berner <christopherberner@gmail.com>"]
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "rlib", "staticlib"]
 
 [dependencies]
 serde = {version = "1.0.102", features=["std", "derive"], optional = true}
@@ -19,6 +19,7 @@ pyo3 = {version = "0.16", features=["extension-module", "abi3-py37"], optional =
 wasm-bindgen = {version = "0.2", optional = true}
 bindgen = {version = "0.61.0", optional = true}
 js-sys = {version = "0.3.60", optional = true}
+hex = "0.4.3"
 
 [dev-dependencies]
 criterion = "0.3"
@@ -49,7 +50,7 @@ lto = false
 [features]
 benchmarking = []
 python = ["pyo3"]
-c = ["bindgen"]
+c = []
 serde_support = ["serde"]
 wasm = ["wasm-bindgen", "js-sys"]
 
