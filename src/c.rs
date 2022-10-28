@@ -1,9 +1,12 @@
 use std::cmp::min;
+use std::ptr::slice_from_raw_parts;
+use std::slice;
 use std::slice::Iter;
-use crate::base::{ObjectTransmissionInformation};
+
+use crate::base::ObjectTransmissionInformation;
+use crate::base::EncodingPacket as EncodingPacketNative;
 use crate::decoder::Decoder as DecoderNative;
 use crate::encoder::Encoder as EncoderNative;
-use crate::base::EncodingPacket as EncodingPacketNative;
 
 #[repr(C)]
 pub struct Encoder {
@@ -26,9 +29,12 @@ pub struct EncodingPacket {
 pub extern "C" fn raptorq_encoder_with_defaults(
     data: *const u8,
     data_len: usize,
-    maximum_transmission_unit: u16
+    maximum_transmission_unit: u16,
 ) -> Box<Encoder> {
-    let data = unsafe { std::slice::from_raw_parts(data, data_len) };
+    let data = unsafe {
+        assert!(!data.is_null());
+        slice::from_raw_parts(data, data_len)
+    };
     let encoder = EncoderNative::with_defaults(data, maximum_transmission_unit);
     Box::new(Encoder { encoder })
 }
@@ -36,14 +42,14 @@ pub extern "C" fn raptorq_encoder_with_defaults(
 #[no_mangle]
 pub extern "C" fn raptorq_encoder_encode(
     encoder: *const Encoder,
-    repair_packets_per_block: u32
+    repair_packets_per_block: u32,
 ) -> Option<Box<EncodingPacket>> {
     unsafe {
         if encoder.is_null() {
             return None;
         }
     }
-    let packets = unsafe  {
+    let packets = unsafe {
         (*encoder).encoder.get_encoded_packets(repair_packets_per_block)
     };
     let mut next: Option<Box<EncodingPacket>> = None;
@@ -76,7 +82,7 @@ pub extern "C" fn raptorq_encoder_free(_: Option<Box<Encoder>>) {}
 #[no_mangle]
 pub extern "C" fn raptorq_decoder_with_defaults(
     transfer_length: u64,
-    maximum_transmission_unit: u16
+    maximum_transmission_unit: u16,
 ) -> Box<Decoder> {
     let config = ObjectTransmissionInformation::with_defaults(
         transfer_length,
@@ -91,7 +97,7 @@ pub extern "C" fn raptorq_decoder_decode(
     packet: *const u8,
     packet_len: usize,
     output: *mut u8,
-) -> usize{
+) -> usize {
     unsafe {
         if decoder.is_null() {
             return 0;
